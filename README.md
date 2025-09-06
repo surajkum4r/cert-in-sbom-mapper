@@ -73,14 +73,8 @@ While exploring multiple paid and open-source tools, none fully satisfy all the 
 
 ## Future Updates
 
-- Auto-fetching and populating missing component details from public registries and vulnerability databases  
-- Enhanced UI for bulk editing and visualization  
+- Auto-fetching and populating missing details mentioned in "CERT-In Required Properties" section.
 - Support for additional SBOM formats
 
----
-
-## Contributing
-
-Contributions, issues, and feature requests are welcome! Feel free to fork the repository and create pull requests.
 
 
