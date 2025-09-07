@@ -4,6 +4,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { Pencil } from "lucide-react";
 import "../styles/components/AppView.css";
+import PropertyMapperService from "../services/propertyMapperService";
 
 const CERT_IN_PROPERTIES = [
   { key: "Patch Status", label: "Patch Status" },
@@ -41,6 +42,7 @@ export default function App() {
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [editComponent, setEditComponent] = useState(null);
   const [vulnerabilities, setVulnerabilities] = useState([]);
+  const [propertyMapper] = useState(() => new PropertyMapperService());
 
   const onFileChange = (e) => {
     const file = e.target.files[0];
@@ -67,6 +69,59 @@ export default function App() {
           setEditComponent(null);
 
           setVulnerabilities(json.vulnerabilities || []);
+
+          // Background auto-populate of CERT-In properties (no UI changes)
+          (async () => {
+            // eslint-disable-next-line no-console
+            console.log("[BG] auto-fetch start for", updatedComponents.length, "components");
+            if (process.env.REACT_APP_DEBUG_FETCH === "1") {
+              // Visible signal to ensure the path is running in the browser
+              // eslint-disable-next-line no-alert
+              alert(`[BG] Auto-fetch starting for ${updatedComponents.length} components`);
+            }
+            try {
+              const fetchedList = await Promise.all(
+                updatedComponents.map((c) =>
+                  propertyMapper.fetchComponentData(c, json.vulnerabilities || []).catch(() => ({}))
+                )
+              );
+
+              const merged = updatedComponents.map((c, idx) => {
+                const fetched = fetchedList[idx] || {};
+                let props = Array.isArray(c.properties) ? [...c.properties] : [];
+                CERT_IN_PROPERTIES.forEach(({ key }) => {
+                  const val = fetched[key];
+                  if (val && val !== "NA") {
+                    props = updateProperty(props, key, String(val));
+                  }
+                });
+                // Ensure we never wipe existing non-NA comments when fetched returns NA/undefined
+                if (!fetched["Comments or Notes"] || fetched["Comments or Notes"] === "NA") {
+                  const existing = props.find((p) => p.name === "Comments or Notes");
+                  if (existing && existing.value) {
+                    props = updateProperty(props, "Comments or Notes", existing.value);
+                  }
+                }
+                return { ...c, properties: props };
+              });
+
+              if (process.env.REACT_APP_DEBUG_FETCH === "1") {
+                // eslint-disable-next-line no-console
+                console.log("[BG] merge completed for", merged.length, "components");
+                // eslint-disable-next-line no-alert
+                alert(`[BG] Merge completed for ${merged.length} components`);
+              }
+              setComponents(merged);
+              setSbom((prev) => ({ ...(prev || {}), components: merged }));
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.error("[BG] auto-fetch error", err);
+              if (process.env.REACT_APP_DEBUG_FETCH === "1") {
+                // eslint-disable-next-line no-alert
+                alert(`[BG] Auto-fetch error: ${err?.message || err}`);
+              }
+            }
+          })();
         } else {
           alert("Invalid CycloneDX SBOM: No components field");
         }
