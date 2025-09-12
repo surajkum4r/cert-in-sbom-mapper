@@ -18,15 +18,14 @@ class LifecycleService {
     return this.overrideCache;
   }
 
-  // Try endoflife.date for some known ecosystems (node, python, java runtime etc.)
+  // Try endoflife.date using heuristic slug candidates derived from component name.
   async fetchEolFromEndOfLife(pkgInfo, component) {
     try {
-      // This API is more product-oriented (e.g., nodejs, python), not libraries.
-      // So only attempt for known products by name match if applicable.
-      const nameLower = (component.name || "").toLowerCase();
-      if (/^python$/.test(nameLower)) return this.queryEolApi("python", component.version);
-      if (/^node(\.js)?$/.test(nameLower)) return this.queryEolApi("nodejs", component.version);
-      if (/^java$/.test(nameLower)) return this.queryEolApi("java", component.version);
+      const candidates = this.generateSlugCandidates(component.name || "");
+      for (const slug of candidates) {
+        const hit = await this.queryEolApi(slug, component.version);
+        if (hit) return hit;
+      }
     } catch {}
     return null;
   }
@@ -39,7 +38,11 @@ class LifecycleService {
       if (!Array.isArray(rows)) return null;
       // Find matching cycle by major/minor prefix when possible
       const v = String(version || "");
-      const found = rows.find((r) => r.cycle && (v === r.cycle || v.startsWith(r.cycle + ".")));
+      const found = rows.find((r) => {
+        if (!r.cycle) return false;
+        const cycle = String(r.cycle);
+        return v === cycle || v.startsWith(cycle + ".");
+      });
       const eol = found?.eol || null;
       if (!eol || eol === false) return null;
       // eol is YYYY-MM-DD
@@ -49,6 +52,37 @@ class LifecycleService {
     } catch {
       return null;
     }
+  }
+
+  generateSlugCandidates(name) {
+    const raw = String(name || "").toLowerCase().trim();
+    if (!raw) return [];
+    // Normalize to words
+    const words = raw
+      .replace(/[^a-z0-9\s\.\-\+]/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+    const stop = new Set(["linux", "os", "framework", "library", "lang", "language"]);
+    const uniques = new Set();
+    const add = (s) => {
+      const slug = s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s\.\-\+]/g, "")
+        .replace(/\s+/g, "-");
+      if (slug) uniques.add(slug);
+    };
+
+    // Full name slug
+    add(raw);
+    // Individual significant tokens
+    words.forEach((w) => {
+      if (!stop.has(w)) add(w);
+    });
+    // Combined without stopwords
+    const filtered = words.filter((w) => !stop.has(w));
+    if (filtered.length > 1) add(filtered.join("-"));
+
+    return Array.from(uniques);
   }
 
   normalizeGa(group, artifact) {
@@ -64,7 +98,7 @@ class LifecycleService {
       if (date) return date; // expected DD-MM-YYYY in overrides
     }
 
-    // 2) endoflife.date for some known products (rarely libraries)
+    // 2) endoflife.date using heuristic slug candidates (no product hardcoding)
     const eol = await this.fetchEolFromEndOfLife(pkgInfo, component);
     if (eol) return eol;
 

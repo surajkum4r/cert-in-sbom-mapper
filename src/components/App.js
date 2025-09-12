@@ -5,6 +5,7 @@ import { saveAs } from "file-saver";
 import { Pencil } from "lucide-react";
 import "../styles/components/AppView.css";
 import PropertyMapperService from "../services/propertyMapperService";
+import ProgressBar from "./ProgressBar";
 
 const CERT_IN_PROPERTIES = [
   { key: "Patch Status", label: "Patch Status" },
@@ -43,6 +44,8 @@ export default function App() {
   const [editComponent, setEditComponent] = useState(null);
   const [vulnerabilities, setVulnerabilities] = useState([]);
   const [propertyMapper] = useState(() => new PropertyMapperService());
+  const [fetchProgress, setFetchProgress] = useState(null); // null = idle, 0-100 fetching
+  const [fetchLabel, setFetchLabel] = useState("");
 
   const onFileChange = (e) => {
     const file = e.target.files[0];
@@ -70,21 +73,27 @@ export default function App() {
 
           setVulnerabilities(json.vulnerabilities || []);
 
-          // Background auto-populate of CERT-In properties (no UI changes)
+          // Background auto-populate of CERT-In properties with visible progress
           (async () => {
-            // eslint-disable-next-line no-console
-            console.log("[BG] auto-fetch start for", updatedComponents.length, "components");
-            if (process.env.REACT_APP_DEBUG_FETCH === "1") {
-              // Visible signal to ensure the path is running in the browser
-              // eslint-disable-next-line no-alert
-              alert(`[BG] Auto-fetch starting for ${updatedComponents.length} components`);
-            }
+            setFetchProgress(0);
+            setFetchLabel("Fetching CERT-In properties for components...");
             try {
-              const fetchedList = await Promise.all(
-                updatedComponents.map((c) =>
-                  propertyMapper.fetchComponentData(c, json.vulnerabilities || []).catch(() => ({}))
-                )
-              );
+              const batchSize = 10; // fetch in batches to avoid rate limits and update progress
+              const total = updatedComponents.length;
+              let fetchedList = [];
+              for (let i = 0; i < total; i += batchSize) {
+                const batch = updatedComponents.slice(i, i + batchSize);
+                const results = await Promise.all(
+                  batch.map((c) =>
+                    propertyMapper
+                      .fetchComponentData(c, json.vulnerabilities || [])
+                      .catch(() => ({}))
+                  )
+                );
+                fetchedList = [...fetchedList, ...results];
+                const pct = Math.round(((i + batch.length) / total) * 100);
+                setFetchProgress(pct);
+              }
 
               const merged = updatedComponents.map((c, idx) => {
                 const fetched = fetchedList[idx] || {};
@@ -104,22 +113,18 @@ export default function App() {
                 }
                 return { ...c, properties: props };
               });
-
-              if (process.env.REACT_APP_DEBUG_FETCH === "1") {
-                // eslint-disable-next-line no-console
-                console.log("[BG] merge completed for", merged.length, "components");
-                // eslint-disable-next-line no-alert
-                alert(`[BG] Merge completed for ${merged.length} components`);
-              }
               setComponents(merged);
               setSbom((prev) => ({ ...(prev || {}), components: merged }));
             } catch (err) {
               // eslint-disable-next-line no-console
               console.error("[BG] auto-fetch error", err);
-              if (process.env.REACT_APP_DEBUG_FETCH === "1") {
-                // eslint-disable-next-line no-alert
-                alert(`[BG] Auto-fetch error: ${err?.message || err}`);
-              }
+            } finally {
+              // Ensure user can see 100% before hiding
+              setFetchProgress(100);
+              setTimeout(() => {
+                setFetchProgress(null);
+                setFetchLabel("");
+              }, 600);
             }
           })();
         } else {
@@ -383,6 +388,9 @@ export default function App() {
 
         {/* Main Body */}
         <main className="main-content">
+          {fetchProgress !== null && (
+            <ProgressBar progress={fetchProgress} label={fetchLabel} />
+          )}
           {!editComponent && components.length > 0 && (
             <>
               <h2 className="main-heading">Components</h2>
@@ -454,6 +462,7 @@ export default function App() {
                 onClick={exportSbom}
                 className="export-button green"
                 title="Export the updated CycloneDX SBOM JSON file"
+                disabled={fetchProgress !== null}
               >
                 Export SBOM JSON
               </button>
@@ -461,6 +470,7 @@ export default function App() {
                 onClick={exportCsv}
                 className="export-button blue"
                 title="Export SBOM Data as CSV"
+                disabled={fetchProgress !== null}
               >
                 Export CSV Report
               </button>
@@ -468,6 +478,7 @@ export default function App() {
                 onClick={exportXlsx}
                 className="export-button purple"
                 title="Export SBOM Data as XLSX (Excel) with Document Control sheet"
+                disabled={fetchProgress !== null}
               >
                 Export XLSX Report
               </button>
